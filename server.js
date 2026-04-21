@@ -1,12 +1,17 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { WebSocketServer } = require('ws');
 const { v4: uuidv4 } = require('uuid');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const CERT_FILE = path.join(__dirname, '.certs', 'server.cert');
+const KEY_FILE = path.join(__dirname, '.certs', 'server.key');
+const USE_HTTPS = fs.existsSync(CERT_FILE) && fs.existsSync(KEY_FILE) && process.env.HTTP_ONLY !== '1';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -101,7 +106,7 @@ function cleanupUser(userId) {
   users.delete(userId);
 }
 
-const server = http.createServer((req, res) => {
+const requestHandler = (req, res) => {
   let reqPath = req.url === '/' ? '/index.html' : req.url;
   reqPath = reqPath.split('?')[0];
 
@@ -123,7 +128,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
     res.end(data);
   });
-});
+};
+
+const server = USE_HTTPS
+  ? https.createServer({ cert: fs.readFileSync(CERT_FILE), key: fs.readFileSync(KEY_FILE) }, requestHandler)
+  : http.createServer(requestHandler);
 
 const wss = new WebSocketServer({ server });
 
@@ -272,6 +281,24 @@ wss.on('connection', (ws) => {
   ws.on('error', () => cleanupUser(userId));
 });
 
+function getLanIPs() {
+  const ips = [];
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const n of nets[name] || []) {
+      if (!n.internal && (n.family === 'IPv4' || n.family === 4)) ips.push(n.address);
+    }
+  }
+  return ips;
+}
+
 server.listen(PORT, HOST, () => {
-  console.log(`RTC Hub server running at http://${HOST}:${PORT}`);
+  const scheme = USE_HTTPS ? 'https' : 'http';
+  console.log(`RTC Hub server running (${scheme.toUpperCase()}):`);
+  console.log(`  ${scheme}://localhost:${PORT}`);
+  for (const ip of getLanIPs()) console.log(`  ${scheme}://${ip}:${PORT}`);
+  if (!USE_HTTPS) {
+    console.log('\n  ⚠ HTTP 模式：仅 localhost 能使用摄像头/麦克风。');
+    console.log('     生成自签证书放到 .certs/server.{cert,key} 以启用 HTTPS。');
+  }
 });
