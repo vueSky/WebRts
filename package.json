@@ -1,0 +1,18 @@
+{
+  "name": "webrts-rtc-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Web RTS MVP - multi-user real-time audio/video room with signaling",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "uuid": "^11.0.3",
+    "ws": "^8.18.0"
+  }
+}

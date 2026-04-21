@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RTC Hub</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="panel left">
+        <h2>成员</h2>
+        <div id="roomMeta" class="meta">未加入房间</div>
+        <ul id="members"></ul>
+      </aside>
+
+      <main class="center">
+        <header class="join-bar">
+          <input id="nameInput" placeholder="昵称" maxlength="32" />
+          <input id="roomInput" placeholder="房间 ID" maxlength="64" />
+          <select id="roomType">
+            <option value="public">公开</option>
+            <option value="private">私密</option>
+            <option value="invite">受邀</option>
+          </select>
+          <button id="joinBtn">创建/加入</button>
+        </header>
+
+        <section class="video-modes">
+          <label>布局</label>
+          <select id="layoutMode">
+            <option value="grid">Grid</option>
+            <option value="speaker">Speaker</option>
+            <option value="spotlight">Spotlight</option>
+          </select>
+          <span id="networkHint">网络: --</span>
+        </section>
+
+        <section id="videoGrid" class="video-grid"></section>
+
+        <footer class="controls">
+          <button id="micBtn">麦克风</button>
+          <button id="camBtn">摄像头</button>
+          <button id="shareBtn">屏幕共享</button>
+          <button id="recordBtn">开始录制</button>
+          <button id="raiseBtn">举手</button>
+          <button id="reactionLike">👍</button>
+          <button id="reactionLaugh">😂</button>
+          <button id="reactionFire">🔥</button>
+        </footer>
+      </main>
+
+      <aside class="panel right">
+        <h2>聊天 / 主持控制</h2>
+        <div class="host-actions">
+          <button id="lockBtn">锁定房间</button>
+          <button id="muteAllBtn">全员静音</button>
+        </div>
+        <div id="chatBox" class="chat-box"></div>
+        <div class="chat-input">
+          <input id="chatInput" placeholder="输入消息" maxlength="300" />
+          <button id="sendChatBtn">发送</button>
+        </div>
+      </aside>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
