@@ -2,67 +2,177 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>RTC Hub</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app">
-      <aside class="panel left">
-        <h2>成员</h2>
-        <div id="roomMeta" class="meta">未加入房间</div>
-        <ul id="members"></ul>
-      </aside>
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+      <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></symbol>
+      <symbol id="i-cam" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></symbol>
+      <symbol id="i-cam-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10"/><line x1="1" y1="1" x2="23" y2="23"/></symbol>
+      <symbol id="i-screen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="9 10 12 7 15 10"/><line x1="12" y1="7" x2="12" y2="14"/></symbol>
+      <symbol id="i-rec" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></symbol>
+      <symbol id="i-hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+      <symbol id="i-leave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="23" y1="1" x2="1" y2="23"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+      <symbol id="i-crown" viewBox="0 0 24 24" fill="currentColor"><path d="M2 18h20l-2-8-5 4-3-6-3 6-5-4z"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></symbol>
+    </svg>
 
-      <main class="center">
-        <header class="join-bar">
-          <input id="nameInput" placeholder="昵称" maxlength="32" />
-          <input id="roomInput" placeholder="房间 ID" maxlength="64" />
+    <div id="lobby" class="lobby">
+      <div class="lobby-card">
+        <div class="brand">
+          <div class="brand-mark">R</div>
+          <div>
+            <div class="brand-title">RTC Hub</div>
+            <div class="brand-sub">加入或创建会议</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="nameInput">昵称</label>
+          <input id="nameInput" placeholder="请输入你的昵称" maxlength="32" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="roomInput">房间号</label>
+          <input id="roomInput" placeholder="房间号 / 会议号" maxlength="64" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="roomType">房间类型</label>
           <select id="roomType">
-            <option value="public">公开</option>
-            <option value="private">私密</option>
-            <option value="invite">受邀</option>
+            <option value="public">公开 — 任何人可加入</option>
+            <option value="private">私密 — 仅知道房间号可加入</option>
+            <option value="invite">受邀 — 仅邀请可加入</option>
           </select>
-          <button id="joinBtn">创建/加入</button>
-        </header>
-
-        <section class="video-modes">
-          <label>布局</label>
-          <select id="layoutMode">
-            <option value="grid">Grid</option>
-            <option value="speaker">Speaker</option>
-            <option value="spotlight">Spotlight</option>
-          </select>
-          <span id="networkHint">网络: --</span>
-        </section>
-
-        <section id="videoGrid" class="video-grid"></section>
-
-        <footer class="controls">
-          <button id="micBtn">麦克风</button>
-          <button id="camBtn">摄像头</button>
-          <button id="shareBtn">屏幕共享</button>
-          <button id="recordBtn">开始录制</button>
-          <button id="raiseBtn">举手</button>
-          <button id="reactionLike">👍</button>
-          <button id="reactionLaugh">😂</button>
-          <button id="reactionFire">🔥</button>
-        </footer>
-      </main>
-
-      <aside class="panel right">
-        <h2>聊天 / 主持控制</h2>
-        <div class="host-actions">
-          <button id="lockBtn">锁定房间</button>
-          <button id="muteAllBtn">全员静音</button>
         </div>
-        <div id="chatBox" class="chat-box"></div>
-        <div class="chat-input">
-          <input id="chatInput" placeholder="输入消息" maxlength="300" />
-          <button id="sendChatBtn">发送</button>
-        </div>
-      </aside>
+
+        <button id="joinBtn" class="btn btn-primary btn-block" disabled>
+          <span>加入房间</span>
+          <svg class="ico"><use href="#i-arrow"/></svg>
+        </button>
+
+        <div id="lobbyError" class="lobby-error"></div>
+
+        <div class="lobby-hint">提示：加入后麦克风与摄像头默认关闭，需手动开启。</div>
+      </div>
     </div>
+
+    <div id="room" class="room hidden">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="brand-mark sm">R</div>
+          <div class="room-id">
+            <div class="room-id-label">房间</div>
+            <div id="topbarRoomId" class="room-id-val">—</div>
+          </div>
+          <div class="status-pills">
+            <span id="pillHost" class="pill"><svg class="ico-sm"><use href="#i-crown"/></svg><span id="topbarHost">—</span></span>
+            <span id="pillLocked" class="pill pill-warn hidden"><svg class="ico-sm"><use href="#i-lock"/></svg>已锁定</span>
+            <span id="pillMuted" class="pill pill-warn hidden">全员静音</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span id="networkHint" class="net-hint">网络: --</span>
+          <button id="leaveBtn" class="btn btn-danger">
+            <svg class="ico"><use href="#i-leave"/></svg>
+            <span>离开</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="stage">
+        <aside class="pane pane-left">
+          <div class="pane-header">
+            <svg class="ico-sm"><use href="#i-users"/></svg>
+            <span>成员</span>
+            <span id="memberCount" class="count">0</span>
+          </div>
+          <ul id="members" class="member-list"></ul>
+        </aside>
+
+        <main class="main">
+          <div class="stage-toolbar">
+            <div class="seg">
+              <button class="seg-btn active" data-layout="grid">网格</button>
+              <button class="seg-btn" data-layout="speaker">演讲者</button>
+              <button class="seg-btn" data-layout="spotlight">聚焦</button>
+            </div>
+          </div>
+          <section id="videoGrid" class="video-grid"></section>
+        </main>
+
+        <aside class="pane pane-right">
+          <div class="pane-tabs">
+            <button class="tab active" data-tab="chat">
+              <svg class="ico-sm"><use href="#i-chat"/></svg>
+              <span>聊天</span>
+            </button>
+            <button class="tab" data-tab="host">主持控制</button>
+          </div>
+
+          <div id="tabChat" class="tab-panel">
+            <div id="chatBox" class="chat-box"></div>
+            <div class="chat-input">
+              <input id="chatInput" placeholder="输入消息，回车发送" maxlength="300" />
+              <button id="sendChatBtn" class="btn btn-primary btn-sm">发送</button>
+            </div>
+          </div>
+
+          <div id="tabHost" class="tab-panel hidden">
+            <div class="host-hint">仅主持人可使用以下控制</div>
+            <button id="lockBtn" class="btn btn-ghost btn-block">
+              <svg class="ico"><use href="#i-lock"/></svg>
+              <span id="lockBtnLabel">锁定房间</span>
+            </button>
+            <button id="muteAllBtn" class="btn btn-ghost btn-block">
+              <svg class="ico"><use href="#i-mic-off"/></svg>
+              <span>全员静音</span>
+            </button>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="dock">
+        <div class="dock-group">
+          <button id="micBtn" class="dock-btn off" title="麦克风">
+            <svg class="ico-lg"><use id="micIcon" href="#i-mic-off"/></svg>
+            <span class="dock-label">开麦</span>
+          </button>
+          <button id="camBtn" class="dock-btn off" title="摄像头">
+            <svg class="ico-lg"><use id="camIcon" href="#i-cam-off"/></svg>
+            <span class="dock-label">开摄像</span>
+          </button>
+          <button id="shareBtn" class="dock-btn" title="共享屏幕">
+            <svg class="ico-lg"><use href="#i-screen"/></svg>
+            <span class="dock-label">共享</span>
+          </button>
+          <button id="recordBtn" class="dock-btn" title="本地录制">
+            <svg class="ico-lg"><use href="#i-rec"/></svg>
+            <span class="dock-label">录制</span>
+          </button>
+          <button id="raiseBtn" class="dock-btn" title="举手">
+            <svg class="ico-lg"><use href="#i-hand"/></svg>
+            <span class="dock-label">举手</span>
+          </button>
+        </div>
+
+        <div class="dock-divider"></div>
+
+        <div class="dock-group">
+          <button id="reactionLike" class="dock-btn reaction" title="点赞">👍</button>
+          <button id="reactionLaugh" class="dock-btn reaction" title="笑">😂</button>
+          <button id="reactionFire" class="dock-btn reaction" title="赞同">🔥</button>
+        </div>
+      </footer>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
 
     <script src="./app.js"></script>
   </body>

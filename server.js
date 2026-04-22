@@ -46,7 +46,8 @@ function memberPayload(user, room) {
     micOn: user.micOn,
     cameraOn: user.cameraOn,
     isHost: room.hostId === user.userId,
-    handRaised: user.handRaised
+    handRaised: user.handRaised,
+    screenSharing: user.screenSharing
   };
 }
 
@@ -125,7 +126,10 @@ const requestHandler = (req, res) => {
       res.end('Not Found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
+      'Cache-Control': 'no-cache, no-store, must-revalidate'
+    });
     res.end(data);
   });
 };
@@ -143,9 +147,10 @@ wss.on('connection', (ws) => {
     ws,
     name: `Guest-${userId.slice(0, 6)}`,
     roomId: null,
-    micOn: true,
-    cameraOn: true,
-    handRaised: false
+    micOn: false,
+    cameraOn: false,
+    handRaised: false,
+    screenSharing: false
   });
 
   send(ws, { type: 'connected', userId });
@@ -226,6 +231,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'media_state') {
       if (typeof msg.micOn === 'boolean') user.micOn = msg.micOn;
       if (typeof msg.cameraOn === 'boolean') user.cameraOn = msg.cameraOn;
+      if (typeof msg.screenSharing === 'boolean') user.screenSharing = msg.screenSharing;
       emitRoomState(room);
       return;
     }
