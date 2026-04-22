@@ -20,6 +20,7 @@
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
+  --dock-mobile-gap: 14px;
 }
 
 * {
@@ -969,6 +970,12 @@ button {
 }
 
 @media (max-width: 640px) {
+  .room {
+    height: 100svh;
+    min-height: 100svh;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-mobile-gap));
+  }
+
   .topbar {
     flex-wrap: wrap;
     gap: 8px;
@@ -986,10 +993,14 @@ button {
   }
   .dock {
     gap: 6px;
-    padding: 8px 6px;
+    margin: 0 6px;
+    padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px));
     overflow-x: auto;
     justify-content: flex-start;
     scrollbar-width: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    transform: translateY(calc(-1 * var(--dock-mobile-gap)));
   }
   .dock::-webkit-scrollbar {
     display: none;
