@@ -1,5 +1,33 @@
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(`${wsProtocol}//${location.host}`);
+// ============ Constants ============
+
+const PAGE_SIZE = 9;
+
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: 'stun:stun.cloudflare.com:3478' }
+  ],
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require'
+};
+
+// Video bitrate targets per participant count
+const BITRATE_TABLE = [
+  { minPeers: 16, video: 80_000,    audio: 20_000 },
+  { minPeers: 10, video: 180_000,   audio: 24_000 },
+  { minPeers: 6,  video: 400_000,   audio: 32_000 },
+  { minPeers: 0,  video: 1_200_000, audio: 64_000 }
+];
+
+// Video capture constraints per participant count
+const VIDEO_CONSTRAINTS_TABLE = [
+  { minPeers: 15, constraints: { width: 320,  height: 240,  frameRate: 8  } },
+  { minPeers: 8,  constraints: { width: 640,  height: 360,  frameRate: 15 } },
+  { minPeers: 0,  constraints: { width: 1280, height: 720,  frameRate: 24 } }
+];
+
+// ============ State ============
 
 const state = {
   userId: null,
@@ -15,8 +43,6 @@ const state = {
   peers: new Map(),
   remoteStreams: new Map(),
   pendingCandidates: new Map(),
-  audioSender: null,
-  videoSender: null,
   handRaised: false,
   isRecording: false,
   layout: 'grid',
@@ -24,8 +50,11 @@ const state = {
   myCameraOn: false,
   myScreenSharing: false,
   _restoreScreen: null,
-  _toastTimer: null
+  _toastTimer: null,
+  videoPage: 0
 };
+
+// ============ DOM refs ============
 
 const els = {
   lobby: document.getElementById('lobby'),
@@ -44,6 +73,10 @@ const els = {
   members: document.getElementById('members'),
   memberCount: document.getElementById('memberCount'),
   videoGrid: document.getElementById('videoGrid'),
+  videoPageControls: document.getElementById('videoPageControls'),
+  prevPageBtn: document.getElementById('prevPageBtn'),
+  nextPageBtn: document.getElementById('nextPageBtn'),
+  pageLabel: document.getElementById('pageLabel'),
   tabChat: document.getElementById('tabChat'),
   tabHost: document.getElementById('tabHost'),
   chatBox: document.getElementById('chatBox'),
@@ -65,9 +98,59 @@ const els = {
   toast: document.getElementById('toast')
 };
 
-function safeSend(payload) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+// ============ WebSocket / Reconnect ============
+
+let ws = null;
+let _reconnectTimer = null;
+let _reconnectDelay = 1000;
+let _inRoom = false;
+const _joinParams = { roomId: null, name: null, roomType: null };
+
+function initWS() {
+  clearTimeout(_reconnectTimer);
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${wsProtocol}//${location.host}`);
+
+  ws.onopen = () => {
+    _reconnectDelay = 1000;
+    if (_inRoom && _joinParams.roomId) {
+      showToast('已重连，正在重新加入房间...');
+      for (const pc of state.peers.values()) { try { pc.close(); } catch {} }
+      state.peers.clear();
+      state.remoteStreams.clear();
+      state.pendingCandidates.clear();
+      state.videoPage = 0;
+      renderVideos();
+      safeSend({
+        type: 'create_or_join_room',
+        roomId: _joinParams.roomId,
+        name: _joinParams.name,
+        roomType: _joinParams.roomType
+      });
+    }
+  };
+
+  ws.onmessage = handleMessage;
+
+  ws.onclose = () => {
+    if (_inRoom) {
+      const delay = _reconnectDelay;
+      _reconnectDelay = Math.min(delay * 2, 30000);
+      showToast(`连接断开，${Math.round(delay / 1000)}s 后自动重连…`, delay + 500);
+      els.networkHint.textContent = '网络: 重连中';
+      els.networkHint.className = 'net-hint quality-poor';
+      _reconnectTimer = setTimeout(initWS, delay);
+    }
+  };
+
+  ws.onerror = () => {};
 }
+
+function safeSend(payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+}
+
+// ============ Utilities ============
 
 function escapeHtml(s) {
   return String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -104,7 +187,7 @@ function getDisplayName(userId) {
   return u ? u.name : (userId ? userId.slice(0, 6) : '—');
 }
 
-/* ============ Lobby ============ */
+// ============ Lobby ============
 
 function validateLobby() {
   const name = els.nameInput.value.trim();
@@ -139,33 +222,30 @@ async function joinRoom() {
   state.myMicOn = false;
   state.myCameraOn = false;
 
-  safeSend({
-    type: 'create_or_join_room',
-    roomId,
-    name,
-    roomType: els.roomType.value
-  });
+  safeSend({ type: 'create_or_join_room', roomId, name, roomType: els.roomType.value });
 }
 
 function leaveRoom() {
+  _inRoom = false;
+  _joinParams.roomId = null;
+  clearTimeout(_reconnectTimer);
   stopTracks(state.localStream);
   stopTracks(state.screenStream);
-  for (const pc of state.peers.values()) pc.close();
-  try { ws.close(); } catch {}
+  for (const pc of state.peers.values()) { try { pc.close(); } catch {} }
+  try { ws && ws.close(); } catch {}
   location.reload();
 }
 
-/* ============ Media ============ */
+// ============ Media ============
 
 async function initLocalMedia() {
   if (state.localStream) return;
   try {
     state.localStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } }
     });
-  } catch (err) {
-    console.error('[Media] getUserMedia failed:', err);
+  } catch {
     state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
   }
 }
@@ -175,7 +255,40 @@ function stopTracks(stream) {
   stream.getTracks().forEach((t) => t.stop());
 }
 
-/* ============ Rendering ============ */
+// ============ Adaptive media quality ============
+
+function getTargetBitrates() {
+  const peerCount = state.peers.size;
+  return BITRATE_TABLE.find((row) => peerCount >= row.minPeers) || BITRATE_TABLE[BITRATE_TABLE.length - 1];
+}
+
+async function applyAdaptiveBitrate(pc) {
+  const rates = getTargetBitrates();
+  for (const sender of pc.getSenders()) {
+    if (!sender.track) continue;
+    const maxBitrate = sender.track.kind === 'video' ? rates.video : rates.audio;
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+    params.encodings[0].maxBitrate = maxBitrate;
+    try { await sender.setParameters(params); } catch {}
+  }
+}
+
+async function applyAdaptiveBitrateAll() {
+  for (const pc of state.peers.values()) {
+    if (pc.connectionState === 'connected') await applyAdaptiveBitrate(pc);
+  }
+}
+
+async function applyAdaptiveVideoConstraints() {
+  const peerCount = state.peers.size;
+  const track = state.localStream && state.localStream.getVideoTracks()[0];
+  if (!track || !state.myCameraOn) return;
+  const row = VIDEO_CONSTRAINTS_TABLE.find((r) => peerCount >= r.minPeers) || VIDEO_CONSTRAINTS_TABLE[VIDEO_CONSTRAINTS_TABLE.length - 1];
+  try { await track.applyConstraints(row.constraints); } catch {}
+}
+
+// ============ Rendering ============
 
 function renderMembers() {
   els.members.innerHTML = '';
@@ -244,39 +357,75 @@ function mflag(cls, iconId, title) {
   return span;
 }
 
+// ---- Video grid with pagination ----
+
+function getPagedParticipants() {
+  const all = [];
+  if (state.localStream) all.push({ isLocal: true });
+  for (const [userId, stream] of state.remoteStreams.entries()) {
+    all.push({ isLocal: false, userId, stream });
+  }
+
+  const total = all.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  state.videoPage = Math.max(0, Math.min(state.videoPage, totalPages - 1));
+
+  return {
+    items: all.slice(state.videoPage * PAGE_SIZE, (state.videoPage + 1) * PAGE_SIZE),
+    total,
+    totalPages,
+    currentPage: state.videoPage
+  };
+}
+
+function updatePageControls({ total, totalPages, currentPage }) {
+  if (!els.videoPageControls) return;
+  if (totalPages <= 1) {
+    els.videoPageControls.classList.add('hidden');
+    return;
+  }
+  els.videoPageControls.classList.remove('hidden');
+  els.pageLabel.textContent = `${currentPage + 1} / ${totalPages}`;
+  els.prevPageBtn.disabled = currentPage === 0;
+  els.nextPageBtn.disabled = currentPage === totalPages - 1;
+}
+
 function renderVideos() {
   els.videoGrid.className = `video-grid ${state.layout === 'grid' ? '' : state.layout}`.trim();
   els.videoGrid.innerHTML = '';
 
-  if (state.localStream) {
-    const useStream = state.screenStream || state.localStream;
-    const tile = createTile({
-      stream: useStream,
-      name: els.nameInput.value.trim() || '我',
-      muted: true,
-      isLocal: true,
-      isHost: state.hostId === state.userId,
-      micOn: state.myMicOn,
-      cameraOn: state.screenStream ? true : state.myCameraOn,
-      screenSharing: !!state.screenStream
-    });
-    if (state.layout !== 'grid') tile.classList.add('speaker-main');
-    els.videoGrid.appendChild(tile);
-  }
+  const paged = getPagedParticipants();
+  updatePageControls(paged);
 
-  for (const [userId, stream] of state.remoteStreams.entries()) {
-    const m = state.members.find((m) => m.userId === userId);
-    const tile = createTile({
-      stream,
-      name: m ? m.name : userId.slice(0, 6),
-      muted: false,
-      isLocal: false,
-      isHost: state.hostId === userId,
-      micOn: m ? m.micOn : true,
-      cameraOn: m ? m.cameraOn : true,
-      screenSharing: m ? !!m.screenSharing : false
-    });
-    els.videoGrid.appendChild(tile);
+  for (const item of paged.items) {
+    if (item.isLocal) {
+      const useStream = state.screenStream || state.localStream;
+      const tile = createTile({
+        stream: useStream,
+        name: els.nameInput.value.trim() || '我',
+        muted: true,
+        isLocal: true,
+        isHost: state.hostId === state.userId,
+        micOn: state.myMicOn,
+        cameraOn: state.screenStream ? true : state.myCameraOn,
+        screenSharing: !!state.screenStream
+      });
+      if (state.layout !== 'grid') tile.classList.add('speaker-main');
+      els.videoGrid.appendChild(tile);
+    } else {
+      const m = state.members.find((mem) => mem.userId === item.userId);
+      const tile = createTile({
+        stream: item.stream,
+        name: m ? m.name : item.userId.slice(0, 6),
+        muted: false,
+        isLocal: false,
+        isHost: state.hostId === item.userId,
+        micOn: m ? m.micOn : true,
+        cameraOn: m ? m.cameraOn : true,
+        screenSharing: m ? !!m.screenSharing : false
+      });
+      els.videoGrid.appendChild(tile);
+    }
   }
 }
 
@@ -331,10 +480,7 @@ function updateRoomMeta() {
   const isHost = state.hostId === state.userId;
   const hostTab = document.querySelector('.tab[data-tab="host"]');
   if (hostTab) hostTab.classList.toggle('hidden', !isHost);
-  if (!isHost && els.tabHost && !els.tabHost.classList.contains('hidden')) {
-    switchTab('chat');
-  }
-
+  if (!isHost && els.tabHost && !els.tabHost.classList.contains('hidden')) switchTab('chat');
   if (els.lockBtnLabel) els.lockBtnLabel.textContent = state.locked ? '解锁房间' : '锁定房间';
 }
 
@@ -363,7 +509,7 @@ function updateMediaButtons() {
   if (handLabel) handLabel.textContent = state.handRaised ? '放下' : '举手';
 }
 
-/* ============ Tabs & Layout ============ */
+// ============ Tabs & Layout ============
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
@@ -383,22 +529,41 @@ document.querySelectorAll('.seg-btn').forEach((btn) => {
     document.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     state.layout = btn.dataset.layout;
+    state.videoPage = 0;
     renderVideos();
   };
 });
 
-/* ============ WebRTC ============ */
+if (els.prevPageBtn) {
+  els.prevPageBtn.onclick = () => {
+    if (state.videoPage > 0) { state.videoPage--; renderVideos(); }
+  };
+}
+if (els.nextPageBtn) {
+  els.nextPageBtn.onclick = () => {
+    state.videoPage++;
+    renderVideos();
+  };
+}
+
+// ============ WebRTC ============
+
+function cleanupPeer(targetId) {
+  const pc = state.peers.get(targetId);
+  if (pc) { try { pc.close(); } catch {} }
+  state.peers.delete(targetId);
+  state.remoteStreams.delete(targetId);
+  state.pendingCandidates.delete(targetId);
+  renderVideos();
+}
 
 function createPeer(targetId) {
   if (state.peers.has(targetId)) return state.peers.get(targetId);
 
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-  });
+  const pc = new RTCPeerConnection(ICE_CONFIG);
 
   const remoteStream = new MediaStream();
   state.remoteStreams.set(targetId, remoteStream);
-  renderVideos();
 
   pc.ontrack = (e) => {
     e.streams[0].getTracks().forEach((t) => remoteStream.addTrack(t));
@@ -415,19 +580,45 @@ function createPeer(targetId) {
   };
 
   pc.onconnectionstatechange = () => {
-    console.log(`[RTC ${targetId.slice(0, 6)}] Conn: ${pc.connectionState}`);
-    if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
-      state.peers.delete(targetId);
-      state.remoteStreams.delete(targetId);
-      state.pendingCandidates.delete(targetId);
-      renderVideos();
+    const s = pc.connectionState;
+    console.log(`[RTC ${targetId.slice(0, 6)}] Conn: ${s}`);
+
+    if (s === 'connected') {
+      applyAdaptiveBitrate(pc);
+      return;
+    }
+
+    if (s === 'failed') {
+      // Give 8s, then recreate if member is still present
+      setTimeout(() => {
+        if (!state.peers.has(targetId) || state.peers.get(targetId) !== pc) return;
+        cleanupPeer(targetId);
+        if (state.members.find((m) => m.userId === targetId)) makeOffer(targetId);
+      }, 8000);
+      return;
+    }
+
+    if (s === 'disconnected') {
+      // Wait 12s — LAN drops are usually transient
+      setTimeout(() => {
+        if (!state.peers.has(targetId) || state.peers.get(targetId) !== pc) return;
+        if (pc.connectionState === 'disconnected') {
+          cleanupPeer(targetId);
+          if (state.members.find((m) => m.userId === targetId)) makeOffer(targetId);
+        }
+      }, 12000);
+      return;
+    }
+
+    if (s === 'closed') {
+      cleanupPeer(targetId);
     }
   };
 
-  const audioTrack = state.localStream.getAudioTracks()[0];
-  const videoTrack = state.localStream.getVideoTracks()[0];
-  if (audioTrack) state.audioSender = pc.addTrack(audioTrack, state.localStream);
-  if (videoTrack) state.videoSender = pc.addTrack(videoTrack, state.localStream);
+  const audioTrack = state.localStream && state.localStream.getAudioTracks()[0];
+  const videoTrack = state.localStream && state.localStream.getVideoTracks()[0];
+  if (audioTrack) pc.addTrack(audioTrack, state.localStream);
+  if (videoTrack) pc.addTrack(videoTrack, state.localStream);
 
   state.peers.set(targetId, pc);
   return pc;
@@ -437,10 +628,8 @@ async function flushPendingCandidates(pc, fromId) {
   const buffered = state.pendingCandidates.get(fromId);
   if (!buffered || buffered.length === 0) return;
   for (const c of buffered) {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(c));
-    } catch (err) {
-      console.warn(`[RTC ${fromId.slice(0, 6)}] flush candidate failed:`, err);
+    try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (err) {
+      console.warn(`[RTC ${fromId.slice(0, 6)}] flush candidate:`, err);
     }
   }
   state.pendingCandidates.delete(fromId);
@@ -478,51 +667,63 @@ async function handleSignal(fromId, signal) {
         state.pendingCandidates.get(fromId).push(signal.candidate);
         return;
       }
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
-      } catch (err) {
-        console.warn(`[RTC ${fromId.slice(0, 6)}] addIceCandidate failed:`, err);
+      try { await pc.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch (err) {
+        console.warn(`[RTC ${fromId.slice(0, 6)}] addIceCandidate:`, err);
       }
     }
   } catch (err) {
-    console.error(`[RTC ${fromId.slice(0, 6)}] handleSignal ${signal.type} failed:`, err);
+    console.error(`[RTC ${fromId.slice(0, 6)}] handleSignal ${signal.type}:`, err);
     showToast(`信令错误: ${err.message}`);
   }
 }
 
-/* ============ Network monitor ============ */
+// ============ Network monitor ============
 
 function monitorNetwork() {
   setInterval(async () => {
-    let quality = 'good';
+    if (!_inRoom || state.peers.size === 0) return;
+
+    let totalRtt = 0;
+    let rttCount = 0;
+    let worstQuality = 'good';
+
     for (const pc of state.peers.values()) {
-      const stats = await pc.getStats();
-      stats.forEach((r) => {
-        if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime) {
-          const rtt = r.currentRoundTripTime * 1000;
-          if (rtt > 350) quality = 'poor';
-          else if (rtt > 200 && quality !== 'poor') quality = 'fair';
-        }
-      });
+      if (pc.connectionState !== 'connected') continue;
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((r) => {
+          if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime) {
+            totalRtt += r.currentRoundTripTime * 1000;
+            rttCount++;
+          }
+          if (r.type === 'inbound-rtp' && r.packetsLost > 0 && r.packetsReceived > 0) {
+            const lossRate = r.packetsLost / (r.packetsLost + r.packetsReceived);
+            if (lossRate > 0.05 && worstQuality !== 'poor') worstQuality = 'poor';
+            else if (lossRate > 0.02 && worstQuality === 'good') worstQuality = 'fair';
+          }
+        });
+      } catch {}
     }
 
+    const avgRtt = rttCount > 0 ? totalRtt / rttCount : 0;
+    let quality;
+    if (avgRtt > 350 || worstQuality === 'poor') quality = 'poor';
+    else if (avgRtt > 150 || worstQuality === 'fair') quality = 'fair';
+    else quality = 'good';
+
     const label = quality === 'good' ? '良好' : quality === 'fair' ? '一般' : '较差';
-    els.networkHint.textContent = `网络 ${label}`;
+    const rttStr = avgRtt > 0 ? ` ${Math.round(avgRtt)}ms` : '';
+    els.networkHint.textContent = `网络 ${label}${rttStr}`;
     els.networkHint.className = `net-hint quality-${quality}`;
 
-    const videoTrack = state.localStream && state.localStream.getVideoTracks()[0];
-    if (!videoTrack || !state.myCameraOn) return;
-
-    try {
-      if (quality === 'poor') await videoTrack.applyConstraints({ width: 640, height: 360, frameRate: 15 });
-      else if (quality === 'fair') await videoTrack.applyConstraints({ width: 1280, height: 720, frameRate: 20 });
-    } catch {}
-  }, 5000);
+    await applyAdaptiveVideoConstraints();
+    await applyAdaptiveBitrateAll();
+  }, 6000);
 }
 
-/* ============ WebSocket events ============ */
+// ============ WebSocket message handler ============
 
-ws.onmessage = async (ev) => {
+async function handleMessage(ev) {
   const msg = JSON.parse(ev.data);
 
   if (msg.type === 'connected') {
@@ -538,11 +739,23 @@ ws.onmessage = async (ev) => {
   }
 
   if (msg.type === 'joined_room') {
+    _inRoom = true;
+    _joinParams.roomId = msg.roomId;
+    _joinParams.name = els.nameInput.value.trim();
+    _joinParams.roomType = els.roomType.value;
+
+    // Clear stale peer state (important after reconnect)
+    for (const pc of state.peers.values()) { try { pc.close(); } catch {} }
+    state.peers.clear();
+    state.remoteStreams.clear();
+    state.pendingCandidates.clear();
+
     state.roomId = msg.roomId;
     state.hostId = msg.hostId;
     state.locked = msg.locked;
     state.mutedAll = msg.mutedAll;
     state.members = msg.members;
+    state.videoPage = 0;
 
     safeSend({ type: 'media_state', micOn: false, cameraOn: false, screenSharing: false });
 
@@ -558,6 +771,11 @@ ws.onmessage = async (ev) => {
       if (m.userId !== state.userId) await makeOffer(m.userId);
     }
 
+    // Suggest camera-off for large meetings
+    if (state.members.length >= 10) {
+      showToast(`${state.members.length} 人会议，建议关闭摄像头以保持稳定`, 5000);
+    }
+
     addChatLine(`已加入房间 ${msg.roomId}`);
     return;
   }
@@ -567,18 +785,18 @@ ws.onmessage = async (ev) => {
     renderMembers();
     updateRoomMeta();
     addChatLine(`${msg.member.name} 加入`);
+
+    const totalCount = state.members.length;
+    if (totalCount === 10 || totalCount === 15 || totalCount === 20) {
+      showToast(`当前 ${totalCount} 人，建议关闭摄像头以保持稳定`, 4000);
+    }
     return;
   }
 
   if (msg.type === 'member_left') {
     const left = state.members.find((m) => m.userId === msg.userId);
     state.members = state.members.filter((m) => m.userId !== msg.userId);
-    const pc = state.peers.get(msg.userId);
-    if (pc) pc.close();
-    state.peers.delete(msg.userId);
-    state.remoteStreams.delete(msg.userId);
-    state.pendingCandidates.delete(msg.userId);
-    renderVideos();
+    cleanupPeer(msg.userId);
     renderMembers();
     updateRoomMeta();
     addChatLine(`${left ? left.name : msg.userId.slice(0, 6)} 离开`);
@@ -653,18 +871,14 @@ ws.onmessage = async (ev) => {
 
   if (msg.type === 'kicked') {
     showToast('你已被移出房间');
+    _inRoom = false;
+    _joinParams.roomId = null;
+    clearTimeout(_reconnectTimer);
     setTimeout(() => location.reload(), 1500);
   }
-};
+}
 
-ws.onclose = () => {
-  if (!els.room.classList.contains('hidden')) {
-    showToast('连接已断开，正在返回首页…');
-    setTimeout(() => location.reload(), 1500);
-  }
-};
-
-/* ============ Event bindings ============ */
+// ============ Event bindings ============
 
 els.nameInput.oninput = validateLobby;
 els.roomInput.oninput = validateLobby;
@@ -683,12 +897,13 @@ els.micBtn.onclick = () => {
   updateMediaButtons();
 };
 
-els.camBtn.onclick = () => {
+els.camBtn.onclick = async () => {
   if (!state.localStream) return;
   const v = state.localStream.getVideoTracks()[0];
   if (!v) return;
   v.enabled = !v.enabled;
   state.myCameraOn = v.enabled;
+  if (v.enabled) await applyAdaptiveVideoConstraints();
   safeSend({ type: 'media_state', cameraOn: v.enabled });
   updateMediaButtons();
   renderVideos();
@@ -726,7 +941,6 @@ els.shareBtn.onclick = async () => {
 
       screenTrack.onended = restore;
       state._restoreScreen = restore;
-
       state.myScreenSharing = true;
       safeSend({ type: 'media_state', screenSharing: true });
       updateMediaButtons();
@@ -737,9 +951,7 @@ els.shareBtn.onclick = async () => {
       addChatLine('你停止了共享屏幕');
     }
   } catch (err) {
-    if (err.name !== 'NotAllowedError') {
-      showToast(`共享失败: ${err.message}`);
-    }
+    if (err.name !== 'NotAllowedError') showToast(`共享失败: ${err.message}`);
   }
 };
 
@@ -791,7 +1003,6 @@ function sendChat() {
 
 els.sendChatBtn.onclick = sendChat;
 els.chatInput.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
-
 els.lockBtn.onclick = () => safeSend({ type: 'room_lock', locked: !state.locked });
 els.muteAllBtn.onclick = () => safeSend({ type: 'mute_all', value: !state.mutedAll });
 
@@ -800,5 +1011,8 @@ window.addEventListener('beforeunload', () => {
   stopTracks(state.screenStream);
 });
 
+// ============ Bootstrap ============
+
 validateLobby();
 monitorNetwork();
+initWS();

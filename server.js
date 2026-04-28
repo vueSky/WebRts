@@ -8,6 +8,10 @@ const { v4: uuidv4 } = require('uuid');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+const ROOM_MAX = 30;
+const WS_PING_INTERVAL = 25_000;
+const WS_CLIENT_TIMEOUT = 60_000;
+const MSG_RATE_LIMIT = 50;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const CERT_FILE = path.join(__dirname, '.certs', 'server.cert');
 const KEY_FILE = path.join(__dirname, '.certs', 'server.key');
@@ -150,12 +154,33 @@ wss.on('connection', (ws) => {
     micOn: false,
     cameraOn: false,
     handRaised: false,
-    screenSharing: false
+    screenSharing: false,
+    lastPong: Date.now()
   });
 
   send(ws, { type: 'connected', userId });
 
+  const pingTimer = setInterval(() => {
+    if (Date.now() - (users.get(userId)?.lastPong ?? 0) > WS_CLIENT_TIMEOUT) {
+      ws.terminate();
+      return;
+    }
+    if (ws.readyState === ws.OPEN) ws.ping();
+  }, WS_PING_INTERVAL);
+
+  ws.on('pong', () => {
+    const u = users.get(userId);
+    if (u) u.lastPong = Date.now();
+  });
+
+  let msgCount = 0;
+  let msgWindow = Date.now();
+
   ws.on('message', (raw) => {
+    const now = Date.now();
+    if (now - msgWindow > 1000) { msgCount = 0; msgWindow = now; }
+    if (++msgCount > MSG_RATE_LIMIT) return;
+
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -176,7 +201,7 @@ wss.on('connection', (ws) => {
       const room = ensureRoom(roomId, roomType);
       if (room.banned.has(userId)) return send(ws, { type: 'error', message: 'You are banned.' });
       if (room.locked && room.members.size > 0 && !room.members.has(userId)) return send(ws, { type: 'error', message: 'Room is locked.' });
-      if (room.members.size >= 6 && !room.members.has(userId)) return send(ws, { type: 'error', message: 'Room is full (max 6).' });
+      if (room.members.size >= ROOM_MAX && !room.members.has(userId)) return send(ws, { type: 'error', message: `房间已满（最多 ${ROOM_MAX} 人）。` });
 
       user.name = name || user.name;
       user.roomId = roomId;
@@ -283,8 +308,8 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => cleanupUser(userId));
-  ws.on('error', () => cleanupUser(userId));
+  ws.on('close', () => { clearInterval(pingTimer); cleanupUser(userId); });
+  ws.on('error', () => { clearInterval(pingTimer); cleanupUser(userId); });
 });
 
 function getLanIPs() {
